@@ -36,23 +36,31 @@ Academic research documents that buying assets with the lowest overnight returns
 
 1. **Fork/clone this repo to GitHub**
 
-2. **Add secrets** (Settings → Secrets and variables → Actions):
+2. **Run auth locally first** to get your token file:
+   ```bash
+   export SCHWAB_APP_KEY='your-app-key'
+   export SCHWAB_APP_SECRET='your-app-secret'
+   python main.py auth
+   # Complete OAuth in browser
+   # This creates schwab_tokens.json
+   ```
+
+3. **Add secrets** (Settings → Secrets and variables → Actions):
    ```
    TWELVE_DATA_API_KEY    - For historical data (get free at twelvedata.com)
    SCHWAB_APP_KEY         - Your Schwab API app key
    SCHWAB_APP_SECRET      - Your Schwab API app secret
-   SCHWAB_REFRESH_TOKEN   - Your Schwab OAuth refresh token
-   SCHWAB_ACCOUNT_HASH    - Your Schwab account hash
+   SCHWAB_TOKEN_FILE      - Contents of schwab_tokens.json (copy/paste the whole file)
    ```
 
-3. **Enable Actions** - The workflow runs automatically at key times:
+4. **Enable Actions** - The workflow runs automatically at key times:
    - 6:30 PM ET - Post-market sweet spot
    - 7:30 PM ET - Post-market end
    - 9:00 AM ET - Pre-open
    - 10:30 AM ET - Silver bullet hour
    - 12:00 PM ET - Midday exit window
 
-4. **Manual trigger** - Go to Actions → "SilverSnap Signal Check" → Run workflow
+5. **Manual trigger** - Go to Actions → "SilverSnap Signal Check" → Run workflow
    - Check "Execute trades" to enable live trading (default is dry run)
 
 ### Option 2: Local/CLI Usage
@@ -146,27 +154,26 @@ STOP_LOSS_AGQ = 0.07              # 7% stop (2x)
 ### 1. Create a Schwab Developer App
 1. Go to [developer.schwab.com](https://developer.schwab.com)
 2. Create an app with "Accounts and Trading" permissions
-3. Note your App Key and Secret
+3. Set callback URL to: `https://127.0.0.1:8182/callback`
+4. Note your App Key and Secret
 
-### 2. Get OAuth Tokens
+### 2. Run Local Auth
 ```bash
-# You'll need to complete OAuth flow once to get refresh token
-# The refresh token lasts 7 days and auto-renews when used
+export SCHWAB_APP_KEY='your-app-key'
+export SCHWAB_APP_SECRET='your-app-secret'
+python main.py auth
 ```
+This opens browser, you log in, paste the callback URL, and it creates `schwab_tokens.json`.
 
-### 3. Get Account Hash
-```bash
-# After authentication, call GET /accounts to get your account hash
-# It looks like: "encrypted_account_hash_string"
-```
-
-### 4. Add to GitHub Secrets
+### 3. Add to GitHub Secrets
 Go to your repo → Settings → Secrets and variables → Actions:
-- `SCHWAB_APP_KEY`
-- `SCHWAB_APP_SECRET`
-- `SCHWAB_REFRESH_TOKEN`
-- `SCHWAB_ACCOUNT_HASH`
-- `TWELVE_DATA_API_KEY`
+- `SCHWAB_APP_KEY` - Your app key
+- `SCHWAB_APP_SECRET` - Your app secret
+- `SCHWAB_TOKEN_FILE` - Copy/paste entire contents of `schwab_tokens.json`
+- `TWELVE_DATA_API_KEY` - Your Twelve Data key
+
+### Token Refresh
+The token auto-refreshes on each run. If it expires (7 days of no use), re-run `python main.py auth` locally and update the `SCHWAB_TOKEN_FILE` secret.
 
 ## Signal Types
 

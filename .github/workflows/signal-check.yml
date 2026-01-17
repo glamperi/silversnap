@@ -1,0 +1,71 @@
+name: SilverSnap Signal Check
+
+on:
+  # Run at key trading times (all times UTC, convert to ET)
+  schedule:
+    # Post-market sweet spot: 6:30 PM ET = 23:30 UTC (11:30 PM)
+    - cron: '30 23 * * 1-5'
+    # Post-market end: 7:30 PM ET = 00:30 UTC next day
+    - cron: '30 0 * * 2-6'
+    # Pre-open check: 9:00 AM ET = 14:00 UTC
+    - cron: '0 14 * * 1-5'
+    # Silver bullet hour: 10:30 AM ET = 15:30 UTC
+    - cron: '30 15 * * 1-5'
+    # Midday exit window: 12:00 PM ET = 17:00 UTC
+    - cron: '0 17 * * 1-5'
+  
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      execute:
+        description: 'Execute trades (not just dry run)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  run-strategy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install requests numpy
+      
+      - name: Run strategy (dry run)
+        if: ${{ github.event.inputs.execute != 'true' }}
+        env:
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+          SCHWAB_APP_KEY: ${{ secrets.SCHWAB_APP_KEY }}
+          SCHWAB_APP_SECRET: ${{ secrets.SCHWAB_APP_SECRET }}
+          SCHWAB_TOKEN_FILE: ${{ secrets.SCHWAB_TOKEN_FILE }}
+        run: |
+          python main.py run --live
+      
+      - name: Run strategy (LIVE EXECUTION)
+        if: ${{ github.event.inputs.execute == 'true' }}
+        env:
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+          SCHWAB_APP_KEY: ${{ secrets.SCHWAB_APP_KEY }}
+          SCHWAB_APP_SECRET: ${{ secrets.SCHWAB_APP_SECRET }}
+          SCHWAB_TOKEN_FILE: ${{ secrets.SCHWAB_TOKEN_FILE }}
+        run: |
+          echo "⚠️  LIVE EXECUTION ENABLED"
+          python main.py run --live --execute
+      
+      - name: Upload status artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: signal-status-${{ github.run_number }}
+          path: |
+            last_status.json
+            position.json
+          retention-days: 30
