@@ -278,12 +278,25 @@ class SchwabClient:
             return False
     
     def _fetch_account_hash(self):
-        """Fetch and store account hash"""
+        """Fetch and store account hash using accountNumbers endpoint"""
+        if not self.token_data:
+            return
+            
         try:
-            accounts = self.get_accounts()
-            if accounts:
-                self.account_hash = accounts[0].get('hashValue')
-                print(f"✓ Account hash retrieved")
+            # Use accountNumbers endpoint - this returns the hash
+            response = requests.get(
+                f"{SCHWAB_BASE_URL}/accounts/accountNumbers",
+                headers={"Authorization": f"Bearer {self.token_data.access_token}"}
+            )
+            if response.status_code == 200:
+                account_numbers = response.json()
+                if account_numbers:
+                    self.account_hash = account_numbers[0].get('hashValue')
+                    account_num = account_numbers[0].get('accountNumber')
+                    print(f"✓ Account #{account_num} hash: {self.account_hash[:12]}...")
+            else:
+                print(f"⚠️ Could not fetch account numbers: {response.status_code}")
+                print(f"   Response: {response.text[:200]}")
         except Exception as e:
             print(f"⚠️ Could not fetch account hash: {e}")
     
