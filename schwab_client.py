@@ -397,13 +397,16 @@ class SchwabClient:
     
     def get_quote(self, symbol: str) -> Dict:
         """Get real-time quote for a symbol"""
-        self._ensure_authenticated()
-        
         response = requests.get(
             f"{SCHWAB_MARKET_URL}/quotes",
-            headers=self._get_headers(),
+            headers={"Authorization": f"Bearer {self.token_data.access_token}"},
             params={"symbols": symbol}
         )
+        
+        if response.status_code != 200:
+            print(f"⚠️ get_quote failed for {symbol}: {response.status_code}")
+            print(f"   Response: {response.text[:300]}")
+        
         response.raise_for_status()
         
         data = response.json()
@@ -414,11 +417,9 @@ class SchwabClient:
     
     def get_quotes(self, symbols: list) -> Dict:
         """Get quotes for multiple symbols"""
-        self._ensure_authenticated()
-        
         response = requests.get(
             f"{SCHWAB_MARKET_URL}/quotes",
-            headers=self._get_headers(),
+            headers={"Authorization": f"Bearer {self.token_data.access_token}"},
             params={"symbols": ",".join(symbols)}
         )
         response.raise_for_status()
