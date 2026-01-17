@@ -351,11 +351,18 @@ class SchwabClient:
         """Get account details including balances and positions"""
         account_hash = self._get_account_hash()
         
+        # Use token directly - don't call _ensure_authenticated which might refresh again
         response = requests.get(
             f"{SCHWAB_BASE_URL}/accounts/{account_hash}",
-            headers=self._get_headers(),
+            headers={"Authorization": f"Bearer {self.token_data.access_token}"},
             params={"fields": "positions"}
         )
+        
+        if response.status_code != 200:
+            print(f"⚠️ get_account failed: {response.status_code}")
+            print(f"   URL: {SCHWAB_BASE_URL}/accounts/{account_hash[:20]}...")
+            print(f"   Response: {response.text[:300]}")
+        
         response.raise_for_status()
         return response.json()
     
