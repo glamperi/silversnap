@@ -152,9 +152,16 @@ class SchwabClient:
         # Always try to refresh if we have a refresh token (resets 7-day clock)
         if self.token_data and self.token_data.refresh_token:
             if self._refresh_tokens():
+                # Fetch account hash if we don't have it
+                if not self.account_hash:
+                    self._fetch_account_hash()
+                    self._save_tokens()  # Save with hash included
                 return True
             if not self.token_data.is_expired():
                 print("⚠️ Refresh failed but access token still valid")
+                if not self.account_hash:
+                    self._fetch_account_hash()
+                    self._save_tokens()
                 return True
         
         # Need to do full OAuth flow
