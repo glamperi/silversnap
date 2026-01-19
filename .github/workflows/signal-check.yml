@@ -3,15 +3,22 @@ name: SilverSnap Signal Check
 on:
   # Run at key trading times (all times UTC, convert to ET)
   schedule:
-    # Post-market sweet spot: 6:30 PM ET = 23:30 UTC (11:30 PM)
+    # ============================================
+    # EXTENDED HOURS - BUYS ONLY
+    # ============================================
+    # Post-market sweet spot: 6:30 PM ET = 23:30 UTC
     - cron: '30 23 * * 1-5'
     # Post-market end: 7:30 PM ET = 00:30 UTC next day
     - cron: '30 0 * * 2-6'
-    # Pre-open check: 9:00 AM ET = 14:00 UTC
-    - cron: '0 14 * * 1-5'
+    # Early pre-market: 7:00 AM ET = 12:00 UTC (catch overnight gaps)
+    - cron: '0 12 * * 1-5'
+    
+    # ============================================
+    # REGULAR HOURS - BUYS AND SELLS
+    # ============================================
     # Silver bullet hour: 10:30 AM ET = 15:30 UTC
     - cron: '30 15 * * 1-5'
-    # Midday exit window: 12:00 PM ET = 17:00 UTC
+    # Midday window: 12:00 PM ET = 17:00 UTC
     - cron: '0 17 * * 1-5'
   
   # Manual trigger
@@ -22,10 +29,21 @@ on:
         required: false
         type: boolean
         default: false
+      buys_only:
+        description: 'Only execute buys (skip sells)'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   run-strategy:
     runs-on: ubuntu-latest
+    
+    env:
+      TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+      SCHWAB_APP_KEY: ${{ secrets.SCHWAB_APP_KEY }}
+      SCHWAB_APP_SECRET: ${{ secrets.SCHWAB_APP_SECRET }}
+      SCHWAB_TOKEN_FILE: ${{ secrets.SCHWAB_TOKEN_FILE }}
     
     steps:
       - name: Checkout repository
@@ -40,25 +58,59 @@ jobs:
         run: |
           pip install requests numpy
       
-      - name: Run strategy (dry run)
-        if: ${{ github.event.inputs.execute != 'true' }}
-        env:
-          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
-          SCHWAB_APP_KEY: ${{ secrets.SCHWAB_APP_KEY }}
-          SCHWAB_APP_SECRET: ${{ secrets.SCHWAB_APP_SECRET }}
-          SCHWAB_TOKEN_FILE: ${{ secrets.SCHWAB_TOKEN_FILE }}
+      - name: Determine trading window
+        id: window
         run: |
+          # Get current hour in ET
+          HOUR_ET=$(TZ='America/New_York' date +%H)
+          echo "Current ET hour: $HOUR_ET"
+          
+          # Extended hours: before 9:30 AM or after 4 PM
+          # Regular hours: 9:30 AM - 4 PM
+          if [ "$HOUR_ET" -lt 9 ] || [ "$HOUR_ET" -ge 16 ]; then
+            echo "window=extended" >> $GITHUB_OUTPUT
+            echo "📌 Extended hours - BUYS ONLY"
+          else
+            echo "window=regular" >> $GITHUB_OUTPUT
+            echo "📌 Regular hours - BUYS AND SELLS"
+          fi
+      
+      # ============================================
+      # MANUAL TRIGGER - Respect user inputs
+      # ============================================
+      - name: Run strategy (Manual - DRY RUN)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.execute != 'true' }}
+        run: |
+          echo "🔍 Manual trigger - DRY RUN mode"
           python main.py run --live
       
-      - name: Run strategy (LIVE EXECUTION)
-        if: ${{ github.event.inputs.execute == 'true' }}
-        env:
-          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
-          SCHWAB_APP_KEY: ${{ secrets.SCHWAB_APP_KEY }}
-          SCHWAB_APP_SECRET: ${{ secrets.SCHWAB_APP_SECRET }}
-          SCHWAB_TOKEN_FILE: ${{ secrets.SCHWAB_TOKEN_FILE }}
+      - name: Run strategy (Manual - LIVE with options)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.execute == 'true' }}
         run: |
-          echo "⚠️  LIVE EXECUTION ENABLED"
+          echo "⚠️  Manual trigger - LIVE EXECUTION"
+          if [ "${{ github.event.inputs.buys_only }}" == "true" ]; then
+            echo "   Mode: BUYS ONLY"
+            python main.py run --live --execute --buys-only
+          else
+            echo "   Mode: BUYS AND SELLS"
+            python main.py run --live --execute
+          fi
+      
+      # ============================================
+      # SCHEDULED RUNS - Auto-execute based on window
+      # ============================================
+      - name: Run strategy (Scheduled - Extended Hours)
+        if: ${{ github.event_name == 'schedule' && steps.window.outputs.window == 'extended' }}
+        run: |
+          echo "🌙 Scheduled run - EXTENDED HOURS"
+          echo "⚡ LIVE EXECUTION - BUYS ONLY"
+          python main.py run --live --execute --buys-only
+      
+      - name: Run strategy (Scheduled - Regular Hours)
+        if: ${{ github.event_name == 'schedule' && steps.window.outputs.window == 'regular' }}
+        run: |
+          echo "☀️  Scheduled run - REGULAR HOURS"
+          echo "⚡ LIVE EXECUTION - BUYS AND SELLS"
           python main.py run --live --execute
       
       - name: Upload status artifact

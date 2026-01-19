@@ -6,7 +6,9 @@ SilverSnap - Mean Reversion Strategy Runner
 Usage:
     python main.py status           # Show current status and signal
     python main.py status --live    # Use Schwab API for live data
-    python main.py run --live       # Run strategy with live execution
+    python main.py run --live       # Run strategy (dry run)
+    python main.py run --live --execute  # Run with live execution
+    python main.py run --live --execute --buys-only  # Extended hours mode
     python main.py watch            # Continuous monitoring mode
     python main.py positions        # Show current Schwab positions
     
@@ -77,17 +79,23 @@ def cmd_status(live: bool = False):
         raise
 
 
-def cmd_run(live: bool = False, dry_run: bool = True):
+def cmd_run(live: bool = False, dry_run: bool = True, buys_only: bool = False):
     """
     Run the strategy - check signal and execute if appropriate
     
     Args:
         live: Use Schwab API for live data and execution
         dry_run: If True, don't actually execute trades
+        buys_only: If True, only execute BUY signals (skip sells) - for extended hours
     """
-    print("\n🚀 SilverSnap Strategy Run")
+    print("\n" + "="*60)
+    print("🚀 SilverSnap Strategy Run")
     print(f"   Mode: {'LIVE' if live else 'Paper'}")
     print(f"   Execution: {'DRY RUN' if dry_run else '⚠️  LIVE TRADING'}")
+    if buys_only and not dry_run:
+        print(f"   Window: 🌙 EXTENDED HOURS (Buys Only)")
+    elif not dry_run:
+        print(f"   Window: ☀️  REGULAR HOURS (Buys & Sells)")
     print("="*60)
     
     if live:
@@ -151,7 +159,17 @@ def cmd_run(live: bool = False, dry_run: bool = True):
                 }, f, indent=2)
     
     elif signal_type in ['SELL_TARGET', 'SELL_STOP', 'SELL_TIME']:
-        if existing_position:
+        # Check if we're in buys-only mode (extended hours)
+        if buys_only and not dry_run:
+            print(f"\n🌙 EXTENDED HOURS MODE - {signal_type} signal detected but SKIPPING")
+            print(f"   Reason: Sells only during regular hours for better liquidity")
+            print(f"   Signal will be re-evaluated at next regular hours run")
+            if existing_position:
+                pos = existing_position
+                pnl_pct = signal.get('details', {}).get('pnl_pct', 0)
+                if isinstance(pnl_pct, (int, float)):
+                    print(f"   Current P&L: {pnl_pct:+.2%}")
+        elif existing_position:
             symbol = existing_position['symbol'] if isinstance(existing_position, dict) else generator.current_position.symbol
             shares = int(existing_position['quantity']) if isinstance(existing_position, dict) else generator.current_position.shares
             
@@ -171,9 +189,10 @@ def cmd_run(live: bool = False, dry_run: bool = True):
             print(f"\n⚠️  {signal_type} signal but no position found")
     
     elif signal_type == 'FILTERS_OFF':
-        print(f"\n🔴 Filters are OFF - no trading allowed")
+        print(f"\n🔴 Filters are OFF - no NEW trades allowed")
         if existing_position:
-            print(f"   ⚠️  Consider manually exiting position in {existing_position.get('symbol', 'unknown')}")
+            pnl_pct = (status['prices']['agq_price'] / existing_position['averagePrice'] - 1) if existing_position.get('symbol') == config.TRADING_SYMBOL else (status['prices']['slv_price'] / existing_position['averagePrice'] - 1)
+            print(f"   ⚠️ FILTERS TURNED OFF - Consider exiting {existing_position.get('symbol', 'position')}. Current P&L: {pnl_pct:.2%}")
     
     else:
         print(f"\n⏸️  No action needed - {signal_type}")
@@ -208,85 +227,35 @@ def cmd_accounts():
     print("\n🔍 Discovering Schwab Accounts...")
     print("="*60)
     
-    # Check we have the basic credentials
-    import os
-    app_key = os.environ.get('SCHWAB_APP_KEY', '')
-    app_secret = os.environ.get('SCHWAB_APP_SECRET', '')
-    refresh_token = os.environ.get('SCHWAB_REFRESH_TOKEN', '')
+    from schwab_client import SchwabClient
     
-    if not all([app_key, app_secret, refresh_token]):
-        print("\n❌ Missing credentials. Need:")
-        print(f"   SCHWAB_APP_KEY: {'✅' if app_key else '❌'}")
-        print(f"   SCHWAB_APP_SECRET: {'✅' if app_secret else '❌'}")
-        print(f"   SCHWAB_REFRESH_TOKEN: {'✅' if refresh_token else '❌'}")
-        print("\n💡 Export these first, then run this command to get your account hash.")
-        return
-    
-    import base64
-    import requests
-    
-    # Get access token
-    auth_string = f"{app_key}:{app_secret}"
-    auth_bytes = base64.b64encode(auth_string.encode()).decode()
-    
-    print("\n   Getting access token...")
-    token_response = requests.post(
-        "https://api.schwabapi.com/v1/oauth/token",
-        headers={
-            "Authorization": f"Basic {auth_bytes}",
-            "Content-Type": "application/x-www-form-urlencoded"
-        },
-        data={
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token
-        }
-    )
-    
-    if token_response.status_code != 200:
-        print(f"\n❌ Token error: {token_response.status_code}")
-        print(f"   {token_response.text}")
-        return
-    
-    access_token = token_response.json()["access_token"]
-    print("   ✅ Got access token")
+    client = SchwabClient()
     
     # Get accounts
-    print("   Fetching accounts...")
-    accounts_response = requests.get(
-        "https://api.schwabapi.com/trader/v1/accounts",
-        headers={"Authorization": f"Bearer {access_token}"}
-    )
+    accounts = client.get_accounts()
     
-    if accounts_response.status_code != 200:
-        print(f"\n❌ Accounts error: {accounts_response.status_code}")
-        print(f"   {accounts_response.text}")
+    if not accounts:
+        print("\n❌ No accounts found or error fetching accounts")
         return
     
-    accounts = accounts_response.json()
+    print(f"\n✅ Found {len(accounts)} account(s):\n")
     
-    print(f"\n   Found {len(accounts)} account(s):\n")
-    
-    for i, account in enumerate(accounts):
-        sec_account = account.get("securitiesAccount", {})
-        account_hash = account.get("hashValue", "N/A")
-        account_num = sec_account.get("accountNumber", "N/A")
-        account_type = sec_account.get("type", "N/A")
+    for i, account in enumerate(accounts, 1):
+        # The account hash is in the 'hashValue' field
+        account_hash = account.get('hashValue', 'N/A')
         
-        balances = sec_account.get("currentBalances", {})
-        cash = balances.get("cashBalance", 0)
+        # Account details are nested under 'securitiesAccount'
+        sec_account = account.get('securitiesAccount', {})
+        account_id = sec_account.get('accountNumber', 'N/A')
+        account_type = sec_account.get('type', 'N/A')
         
-        print(f"   Account {i+1}:")
-        print(f"      Number: {account_num}")
-        print(f"      Type: {account_type}")
-        print(f"      Cash: ${cash:,.2f}")
-        print(f"      Hash: {account_hash}")
+        print(f"  Account {i}:")
+        print(f"    Account Number: {account_id}")
+        print(f"    Account Type: {account_type}")
+        print(f"    Account Hash: {account_hash}")
         print()
     
-    if accounts:
-        first_hash = accounts[0].get("hashValue", "")
-        print(f"   💡 To use the first account, run:")
-        print(f"      export SCHWAB_ACCOUNT_HASH='{first_hash}'")
-    
+    print("  💡 Use the 'Account Hash' value for SCHWAB_ACCOUNT_HASH")
     print("="*60)
 
 
@@ -295,22 +264,18 @@ def cmd_positions():
     print("\n📊 Schwab Positions")
     print("="*60)
     
+    from schwab_client import SchwabClient
+    
     client = get_schwab_client()
-    
-    # Get account info
-    buying_power = client.get_buying_power()
-    print(f"\n  Buying Power: ${buying_power:,.2f}")
-    
-    # Get positions
     positions = client.get_positions()
     
     if not positions:
-        print("\n  No positions")
+        print("\n  No positions found")
     else:
-        print(f"\n  Positions ({len(positions)}):")
+        print(f"\n  Found {len(positions)} position(s):")
         for symbol, pos in positions.items():
-            pnl = pos['currentDayProfitLoss']
-            pnl_pct = pos['currentDayProfitLossPercentage']
+            pnl = pos['marketValue'] - (pos['averagePrice'] * pos['quantity'])
+            pnl_pct = (pnl / (pos['averagePrice'] * pos['quantity'])) * 100 if pos['averagePrice'] > 0 else 0
             pnl_color = '🟢' if pnl >= 0 else '🔴'
             print(f"\n    {symbol}:")
             print(f"      Qty: {pos['quantity']}")
@@ -455,6 +420,7 @@ Examples:
     python main.py status --live       # Check signal using Schwab API
     python main.py run --live          # Run strategy, dry run mode
     python main.py run --live --execute  # Run strategy with LIVE execution
+    python main.py run --live --execute --buys-only  # Extended hours mode (no sells)
     python main.py positions           # Show Schwab positions
     python main.py watch --live        # Monitor using Schwab API
     python main.py filters             # Show PSAR filter status
@@ -472,6 +438,7 @@ Examples:
     run_parser = subparsers.add_parser('run', help='Run strategy and execute trades')
     run_parser.add_argument('--live', action='store_true', help='Use Schwab API for live data')
     run_parser.add_argument('--execute', action='store_true', help='Actually execute trades (default is dry run)')
+    run_parser.add_argument('--buys-only', action='store_true', help='Only execute buys, skip sells (for extended hours)')
     
     # Auth command
     auth_parser = subparsers.add_parser('auth', help='Authenticate with Schwab (run this first!)')
@@ -499,7 +466,7 @@ Examples:
     if args.command == 'status':
         cmd_status(live=args.live)
     elif args.command == 'run':
-        cmd_run(live=args.live, dry_run=not args.execute)
+        cmd_run(live=args.live, dry_run=not args.execute, buys_only=getattr(args, 'buys_only', False))
     elif args.command == 'auth':
         cmd_auth()
     elif args.command == 'accounts':

@@ -111,7 +111,7 @@ STOP_LOSS_ZSL = 0.07  # 7% stop (inverse is volatile)
 # =============================================================================
 
 # Max hold days before forced evaluation
-MAX_HOLD_DAYS = 2
+MAX_HOLD_DAYS = 8
 
 
 # =============================================================================
